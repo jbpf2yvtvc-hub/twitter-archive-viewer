@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Twitter Archive Viewer</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f7f7f5;
+    --surface: #ffffff;
+    --surface2: #f1f0eb;
+    --border: rgba(0,0,0,0.12);
+    --border2: rgba(0,0,0,0.22);
+    --text: #1a1a18;
+    --text2: #5f5e5a;
+    --text3: #888780;
+    --accent: #1d9e75;
+    --accent-bg: #e1f5ee;
+    --accent-text: #085041;
+    --danger: #e24b4a;
+    --radius: 10px;
+    --radius-sm: 6px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a18;
+      --surface: #2c2c2a;
+      --surface2: #3a3a38;
+      --border: rgba(255,255,255,0.10);
+      --border2: rgba(255,255,255,0.20);
+      --text: #f1f0eb;
+      --text2: #b4b2a9;
+      --text3: #888780;
+      --accent: #5dcaa5;
+      --accent-bg: #085041;
+      --accent-text: #9fe1cb;
+    }
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* Layout */
+  #app { display: flex; flex-direction: column; min-height: 100vh; }
+  header {
+    background: var(--surface);
+    border-bottom: 0.5px solid var(--border);
+    padding: 0 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    height: 56px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .logo { font-size: 18px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 8px; }
+  .logo svg { color: var(--accent); }
+  .header-stats { margin-left: auto; display: flex; gap: 1rem; font-size: 13px; color: var(--text2); }
+  .stat-pill { background: var(--surface2); border-radius: 20px; padding: 4px 12px; }
+
+  main { display: flex; flex: 1; }
+
+  /* Sidebar */
+  #sidebar {
+    width: 220px;
+    min-width: 220px;
+    background: var(--surface);
+    border-right: 0.5px solid var(--border);
+    padding: 1rem 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    position: sticky;
+    top: 56px;
+    height: calc(100vh - 56px);
+    overflow-y: auto;
+  }
+  .nav-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text3);
+    padding: 8px 1.25rem 4px;
+  }
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 1.25rem;
+    cursor: pointer;
+    border-radius: 0;
+    color: var(--text2);
+    font-size: 14px;
+    transition: background 0.1s;
+    border: none;
+    background: none;
+    width: 100%;
+    text-align: left;
+  }
+  .nav-item:hover { background: var(--surface2); color: var(--text); }
+  .nav-item.active { background: var(--accent-bg); color: var(--accent-text); font-weight: 500; }
+  .nav-item .count {
+    margin-left: auto;
+    font-size: 12px;
+    background: var(--surface2);
+    border-radius: 10px;
+    padding: 1px 7px;
+    color: var(--text3);
+  }
+  .nav-item.active .count { background: var(--accent); color: #fff; }
+
+  /* Content */
+  #content { flex: 1; padding: 1.5rem; max-width: 780px; }
+
+  /* Drop zone */
+  #dropzone {
+    border: 2px dashed var(--border2);
+    border-radius: var(--radius);
+    padding: 3rem 2rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    margin-bottom: 1.5rem;
+  }
+  #dropzone:hover, #dropzone.drag-over {
+    border-color: var(--accent);
+    background: var(--accent-bg);
+  }
+  #dropzone svg { color: var(--text3); margin-bottom: 1rem; }
+  #dropzone h2 { font-size: 18px; font-weight: 500; margin-bottom: 0.5rem; }
+  #dropzone p { color: var(--text2); font-size: 14px; margin-bottom: 1.25rem; }
+  #dropzone .file-list { font-size: 13px; color: var(--text3); margin-top: 0.75rem; }
+  #file-input { display: none; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--accent); color: #fff;
+    border: none; border-radius: var(--radius-sm);
+    padding: 8px 18px; font-size: 14px; font-weight: 500;
+    cursor: pointer; transition: opacity 0.1s;
+  }
+  .btn:hover { opacity: 0.88; }
+  .btn-outline {
+    background: transparent;
+    color: var(--text);
+    border: 0.5px solid var(--border2);
+  }
+  .btn-outline:hover { background: var(--surface2); opacity: 1; }
+
+  /* Search bar */
+  #search-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 1.25rem;
+    align-items: center;
+  }
+  #search-input {
+    flex: 1;
+    background: var(--surface);
+    border: 0.5px solid var(--border2);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    font-size: 14px;
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  #search-input:focus { border-color: var(--accent); }
+  #sort-select {
+    background: var(--surface);
+    border: 0.5px solid var(--border2);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    font-size: 13px;
+    color: var(--text);
+    outline: none;
+    cursor: pointer;
+  }
+  .result-count { font-size: 13px; color: var(--text3); margin-bottom: 1rem; }
+
+  /* Tweet card */
+  .tweet-card {
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem 1.25rem;
+    margin-bottom: 10px;
+    transition: border-color 0.15s;
+  }
+  .tweet-card:hover { border-color: var(--border2); }
+  .tweet-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    color: var(--text3);
+    flex-wrap: wrap;
+  }
+  .tweet-meta .handle { color: var(--accent); font-weight: 500; }
+  .tweet-meta .date { margin-left: auto; }
+  .tweet-body { font-size: 15px; line-height: 1.6; color: var(--text); word-break: break-word; }
+  .tweet-body .highlight { background: #fef9c3; color: #713800; border-radius: 2px; padding: 0 2px; }
+  @media (prefers-color-scheme: dark) {
+    .tweet-body .highlight { background: #633806; color: #fac775; }
+  }
+  .tweet-footer {
+    display: flex;
+    gap: 1rem;
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--text3);
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .tweet-footer .stat { display: flex; align-items: center; gap: 4px; }
+  .media-thumb {
+    margin-top: 10px;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .media-thumb span {
+    background: var(--surface2);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 4px 10px;
+    font-size: 12px;
+    color: var(--text2);
+  }
+  .reply-badge {
+    background: var(--surface2);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 12px;
+    color: var(--text3);
+  }
+  .tweet-link {
+    font-size: 12px;
+    color: var(--accent);
+    margin-left: auto;
+  }
+
+  /* DM card */
+  .dm-card {
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+  .dm-header {
+    background: var(--surface2);
+    padding: 10px 1.25rem;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text2);
+    display: flex;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+  }
+  .dm-header:hover { color: var(--text); }
+  .dm-body { padding: 0.75rem 1.25rem; display: none; }
+  .dm-body.open { display: block; }
+  .dm-message { margin-bottom: 8px; font-size: 14px; color: var(--text2); }
+  .dm-message .sender { font-weight: 500; color: var(--text); }
+  .dm-message .dm-time { font-size: 12px; color: var(--text3); margin-left: 6px; }
+
+  /* Pagination */
+  #pagination {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-top: 1.5rem;
+    flex-wrap: wrap;
+  }
+  .page-btn {
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    color: var(--text);
+    transition: background 0.1s;
+  }
+  .page-btn:hover { background: var(--surface2); }
+  .page-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .page-btn:disabled { opacity: 0.4; cursor: default; }
+  .page-info { font-size: 13px; color: var(--text3); padding: 0 6px; }
+
+  /* Empty state */
+  .empty-state {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--text3);
+  }
+  .empty-state p { margin-top: 0.5rem; font-size: 14px; }
+
+  /* Loading */
+  #loading-bar {
+    position: fixed; top: 0; left: 0; height: 3px;
+    background: var(--accent); width: 0;
+    transition: width 0.3s;
+    z-index: 9999;
+  }
+
+  /* Filters row */
+  .filters-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .filter-chip {
+    background: var(--surface);
+    border: 0.5px solid var(--border2);
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    color: var(--text2);
+    transition: background 0.1s;
+    user-select: none;
+  }
+  .filter-chip:hover { background: var(--surface2); }
+  .filter-chip.active { background: var(--accent-bg); color: var(--accent-text); border-color: var(--accent); font-weight: 500; }
+
+  /* Instructions panel */
+  .info-box {
+    background: var(--accent-bg);
+    border: 0.5px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+    font-size: 14px;
+    color: var(--accent-text);
+    line-height: 1.6;
+  }
+  .info-box strong { font-weight: 600; }
+  .info-box ol { margin: 0.5rem 0 0 1.2rem; }
+  .info-box li { margin-bottom: 4px; }
+
+  @media (max-width: 640px) {
+    #sidebar { display: none; }
+    #content { padding: 1rem; }
+  }
+</style>
+</head>
+<body>
+<div id="loading-bar"></div>
+<div id="app">
+  <header>
+    <div class="logo">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 4s-.7 2.1-2 3.4c1.6 10-9.4 17.3-18 11.6 2.2.1 4.4-.6 6-2C3 15.5.5 9.6 3 5c2.2 2.4 5.4 3.9 9 4-.9-4.2 4-6.6 7-3.8 1.1 0 3-1.2 3-1.2z"/></svg>
+      Archive Viewer
+    </div>
+    <div class="header-stats" id="header-stats" style="display:none">
+      <span class="stat-pill" id="stat-tweets">— tweets</span>
+      <span class="stat-pill" id="stat-likes">— likes</span>
+      <span class="stat-pill" id="stat-dms">— DM convos</span>
+    </div>
+  </header>
+  <main>
+    <nav id="sidebar">
+      <div class="nav-label">Browse</div>
+      <button class="nav-item active" data-tab="tweets" onclick="switchTab('tweets')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 4s-.7 2.1-2 3.4c1.6 10-9.4 17.3-18 11.6 2.2.1 4.4-.6 6-2C3 15.5.5 9.6 3 5c2.2 2.4 5.4 3.9 9 4-.9-4.2 4-6.6 7-3.8 1.1 0 3-1.2 3-1.2z"/></svg>
+        Tweets
+        <span class="count" id="nav-tweet-count">0</span>
+      </button>
+      <button class="nav-item" data-tab="replies" onclick="switchTab('replies')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
+        Replies
+        <span class="count" id="nav-reply-count">0</span>
+      </button>
+      <button class="nav-item" data-tab="likes" onclick="switchTab('likes')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+        Likes
+        <span class="count" id="nav-like-count">0</span>
+      </button>
+      <button class="nav-item" data-tab="dms" onclick="switchTab('dms')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Direct Messages
+        <span class="count" id="nav-dm-count">0</span>
+      </button>
+      <div class="nav-label" style="margin-top:1rem">Account</div>
+      <button class="nav-item" data-tab="media" onclick="switchTab('media')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        Media
+        <span class="count" id="nav-media-count">0</span>
+      </button>
+      <button class="nav-item" style="margin-top:auto;" onclick="resetApp()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.1"/></svg>
+        Load new archive
+      </button>
+    </nav>
+
+    <div id="content">
+      <!-- Drop zone shown before load -->
+      <div id="load-screen">
+        <div class="info-box">
+          <strong>How to get your Twitter archive:</strong>
+          <ol>
+            <li>Go to <strong>X.com → Settings → Your account → Download an archive of your data</strong></li>
+            <li>Request the archive and wait for the email (can take up to 24 hours)</li>
+            <li>Download and unzip the archive file</li>
+            <li>Drag the entire unzipped folder below, or select individual <code>.js</code> files</li>
+          </ol>
+        </div>
+        <div id="dropzone">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <h2>Drop your Twitter archive here</h2>
+          <p>Your data stays in your browser — nothing is uploaded anywhere.</p>
+          <button class="btn" onclick="document.getElementById('file-input').click()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Choose files
+          </button>
+          <input type="file" id="file-input" multiple accept=".js,.json" onchange="handleFileSelect(this.files)">
+          <div class="file-list" id="file-list"></div>
+        </div>
+      </div>
+
+      <!-- Main viewer (hidden until load) -->
+      <div id="viewer-screen" style="display:none">
+        <div id="search-bar">
+          <input type="text" id="search-input" placeholder="Search…" oninput="onSearch()" />
+          <select id="sort-select" onchange="onSort()">
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="most-likes">Most liked</option>
+            <option value="most-retweets">Most retweeted</option>
+          </select>
+        </div>
+        <div class="filters-row" id="filter-row"></div>
+        <div class="result-count" id="result-count"></div>
+        <div id="feed"></div>
+        <div id="pagination"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+const DB = {
+  tweets: [],
+  likes: [],
+  dms: [],
+  handle: '',
+  loaded: false
+};
+
+let state = {
+  tab: 'tweets',
+  query: '',
+  filter: 'all',
+  sort: 'newest',
+  page: 1,
+  perPage: 25
+};
+
+// ─── File Loading ───────────────────────────────────────────────────────────
+
+function handleFileSelect(files) {
+  const arr = Array.from(files);
+  document.getElementById('file-list').textContent =
+    arr.length + ' file(s) selected: ' + arr.map(f => f.name).join(', ');
+  loadFiles(arr);
+}
+
+const dropzone = document.getElementById('dropzone');
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('drag-over');
+  const items = e.dataTransfer.items;
+  const files = [];
+  for (let item of items) {
+    if (item.kind === 'file') files.push(item.getAsFile());
+  }
+  handleFileSelect(files);
+});
+
+function setProgress(pct) {
+  document.getElementById('loading-bar').style.width = pct + '%';
+}
+
+async function loadFiles(files) {
+  setProgress(10);
+  const jsFiles = files.filter(f => f.name.endsWith('.js') || f.name.endsWith('.json'));
+  if (!jsFiles.length) { alert('No .js or .json files found. Please select files from your Twitter archive.'); setProgress(0); return; }
+
+  let done = 0;
+  for (const file of jsFiles) {
+    await parseFile(file);
+    done++;
+    setProgress(10 + Math.round(done / jsFiles.length * 80));
+  }
+
+  finalise();
+  setProgress(100);
+  setTimeout(() => setProgress(0), 600);
+}
+
+async function parseFile(file) {
+  const text = await file.text();
+  const name = file.name.toLowerCase();
+
+  // Twitter archive JS files look like: window.YTD.tweets.part0 = [...]
+  let json = null;
+  const m = text.match(/=\s*(\[[\s\S]*\]|\{[\s\S]*\})\s*;?\s*$/);
+  if (m) {
+    try { json = JSON.parse(m[1]); } catch(e) {}
+  }
+  if (!json) {
+    try { json = JSON.parse(text); } catch(e) {}
+  }
+  if (!json) return;
+
+  const arr = Array.isArray(json) ? json : (json.tweets || json.dm_conversations || []);
+
+  if (name.includes('tweet') && !name.includes('like')) {
+    for (const item of arr) {
+      const t = item.tweet || item;
+      DB.tweets.push(normaliseTweet(t));
+    }
+  } else if (name.includes('like')) {
+    for (const item of arr) {
+      const l = item.like || item;
+      DB.likes.push(normaliseLike(l));
+    }
+  } else if (name.includes('direct-message') || name.includes('dm')) {
+    for (const item of arr) {
+      const convo = item.dmConversation || item;
+      DB.dms.push(normaliseConvo(convo));
+    }
+  } else if (name.includes('account')) {
+    const acct = Array.isArray(json) ? (json[0]?.account || {}) : json;
+    DB.handle = acct.username || acct.accountDisplayName || '';
+  }
+}
+
+function normaliseTweet(t) {
+  return {
+    id: t.id_str || t.id || '',
+    text: t.full_text || t.text || '',
+    date: t.created_at ? new Date(t.created_at) : new Date(0),
+    likes: parseInt(t.favorite_count || 0),
+    retweets: parseInt(t.retweet_count || 0),
+    isReply: !!(t.in_reply_to_status_id_str || t.in_reply_to_user_id_str),
+    replyTo: t.in_reply_to_screen_name || '',
+    hasMedia: !!(t.extended_entities?.media?.length),
+    mediaCount: t.extended_entities?.media?.length || 0,
+    mediaTypes: (t.extended_entities?.media || []).map(m => m.type),
+    hasLink: (t.entities?.urls?.length > 0),
+    urls: (t.entities?.urls || []).map(u => u.expanded_url || u.url),
+    raw: t
+  };
+}
+
+function normaliseLike(l) {
+  return {
+    tweetId: l.tweetId || l.tweet_id || '',
+    url: l.expandedUrl || l.expanded_url || ('https://twitter.com/i/web/status/' + (l.tweetId || '')),
+    text: l.fullText || l.full_text || '(tweet text not available in archive)',
+    date: null
+  };
+}
+
+function normaliseConvo(c) {
+  const msgs = (c.messages || []).map(m => {
+    const msg = m.messageCreate || m;
+    return {
+      senderId: msg.senderId || msg.sender_id || '',
+      text: msg.text || '',
+      date: msg.createdAt ? new Date(msg.createdAt) : new Date(0)
+    };
+  });
+  return {
+    id: c.conversationId || c.conversation_id || '',
+    messages: msgs,
+    participants: c.participants || []
+  };
+}
+
+function finalise() {
+  DB.loaded = true;
+  DB.tweets.sort((a,b) => b.date - a.date);
+
+  const mediaCount = DB.tweets.filter(t => t.hasMedia).length;
+
+  document.getElementById('stat-tweets').textContent =
+    DB.tweets.length.toLocaleString() + ' tweets';
+  document.getElementById('stat-likes').textContent =
+    DB.likes.length.toLocaleString() + ' likes';
+  document.getElementById('stat-dms').textContent =
+    DB.dms.length.toLocaleString() + ' DM convos';
+  document.getElementById('header-stats').style.display = 'flex';
+
+  document.getElementById('nav-tweet-count').textContent =
+    DB.tweets.filter(t => !t.isReply).length.toLocaleString();
+  document.getElementById('nav-reply-count').textContent =
+    DB.tweets.filter(t => t.isReply).length.toLocaleString();
+  document.getElementById('nav-like-count').textContent =
+    DB.likes.length.toLocaleString();
+  document.getElementById('nav-dm-count').textContent =
+    DB.dms.length.toLocaleString();
+  document.getElementById('nav-media-count').textContent =
+    mediaCount.toLocaleString();
+
+  document.getElementById('load-screen').style.display = 'none';
+  document.getElementById('viewer-screen').style.display = 'block';
+
+  switchTab('tweets');
+}
+
+// ─── Navigation ─────────────────────────────────────────────────────────────
+
+function switchTab(tab) {
+  state.tab = tab;
+  state.page = 1;
+  state.query = '';
+  state.filter = 'all';
+  document.getElementById('search-input').value = '';
+
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.tab === tab);
+  });
+
+  buildFilterRow();
+  renderFeed();
+}
+
+function buildFilterRow() {
+  const row = document.getElementById('filter-row');
+  row.innerHTML = '';
+  if (state.tab === 'tweets' || state.tab === 'replies') {
+    const chips = [
+      ['all', 'All'],
+      ['has-media', 'Has media'],
+      ['has-link', 'Has link'],
+      ['popular', 'Most liked (10+)']
+    ];
+    chips.forEach(([val, label]) => {
+      const el = document.createElement('span');
+      el.className = 'filter-chip' + (state.filter === val ? ' active' : '');
+      el.textContent = label;
+      el.onclick = () => { state.filter = val; state.page = 1; buildFilterRow(); renderFeed(); };
+      row.appendChild(el);
+    });
+  }
+}
+
+// ─── Data Getters ────────────────────────────────────────────────────────────
+
+function getItems() {
+  let items = [];
+  const q = state.query.toLowerCase().trim();
+
+  if (state.tab === 'tweets') {
+    items = DB.tweets.filter(t => !t.isReply);
+  } else if (state.tab === 'replies') {
+    items = DB.tweets.filter(t => t.isReply);
+  } else if (state.tab === 'likes') {
+    items = DB.likes;
+  } else if (state.tab === 'dms') {
+    items = DB.dms;
+  } else if (state.tab === 'media') {
+    items = DB.tweets.filter(t => t.hasMedia);
+  }
+
+  if (q) {
+    if (state.tab === 'likes') {
+      items = items.filter(i => i.text.toLowerCase().includes(q) || i.url.toLowerCase().includes(q));
+    } else if (state.tab === 'dms') {
+      items = items.filter(i => i.messages.some(m => m.text.toLowerCase().includes(q)));
+    } else {
+      items = items.filter(i => i.text.toLowerCase().includes(q));
+    }
+  }
+
+  if (state.filter === 'has-media') items = items.filter(t => t.hasMedia);
+  if (state.filter === 'has-link') items = items.filter(t => t.hasLink);
+  if (state.filter === 'popular') items = items.filter(t => t.likes >= 10);
+
+  if (state.tab !== 'likes' && state.tab !== 'dms') {
+    if (state.sort === 'newest') items.sort((a,b) => b.date - a.date);
+    else if (state.sort === 'oldest') items.sort((a,b) => a.date - b.date);
+    else if (state.sort === 'most-likes') items.sort((a,b) => b.likes - a.likes);
+    else if (state.sort === 'most-retweets') items.sort((a,b) => b.retweets - a.retweets);
+  }
+
+  return items;
+}
+
+// ─── Rendering ───────────────────────────────────────────────────────────────
+
+function highlight(text, query) {
+  if (!query) return escHtml(text);
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return escHtml(text).replace(new RegExp('(' + escaped + ')', 'gi'),
+    '<span class="highlight">$1</span>');
+}
+
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+
+function fmtDate(d) {
+  if (!d || d.getTime() === 0) return '';
+  return d.toLocaleDateString('en-US', { year:'numeric', month:'short', day:'numeric' });
+}
+
+function renderTweetCard(t) {
+  const q = state.query.toLowerCase().trim();
+  const tweetUrl = 'https://twitter.com/' + (DB.handle || 'i') + '/status/' + t.id;
+  let mediaHtml = '';
+  if (t.hasMedia) {
+    mediaHtml = '<div class="media-thumb">' +
+      t.mediaTypes.map(type => '<span>' + type + '</span>').join('') +
+      '</div>';
+  }
+  let linksHtml = '';
+  if (t.hasLink && t.urls.length) {
+    linksHtml = '<div style="margin-top:6px">' +
+      t.urls.slice(0,2).map(u => '<a href="' + escHtml(u) + '" target="_blank" rel="noopener" style="font-size:13px;color:var(--accent);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:400px">' + escHtml(u) + '</a>').join('') +
+      '</div>';
+  }
+  const replyBadge = t.isReply && t.replyTo ?
+    '<span class="reply-badge">↩ @' + escHtml(t.replyTo) + '</span>' : '';
+
+  return `<div class="tweet-card">
+    <div class="tweet-meta">
+      <span class="handle">@${escHtml(DB.handle || 'you')}</span>
+      ${replyBadge}
+      <span class="date">${fmtDate(t.date)}</span>
+    </div>
+    <div class="tweet-body">${highlight(t.text, q)}</div>
+    ${mediaHtml}
+    ${linksHtml}
+    <div class="tweet-footer">
+      <span class="stat">♥ ${t.likes.toLocaleString()}</span>
+      <span class="stat">↺ ${t.retweets.toLocaleString()}</span>
+      <a href="${escHtml(tweetUrl)}" target="_blank" rel="noopener" class="tweet-link">View original ↗</a>
+    </div>
+  </div>`;
+}
+
+function renderLikeCard(l) {
+  const q = state.query.toLowerCase().trim();
+  return `<div class="tweet-card">
+    <div class="tweet-meta">
+      <span style="color:var(--danger)">♥ liked</span>
+      <a href="${escHtml(l.url)}" target="_blank" rel="noopener" class="tweet-link" style="margin-left:auto">View tweet ↗</a>
+    </div>
+    <div class="tweet-body">${highlight(l.text, q)}</div>
+  </div>`;
+}
+
+function renderDmCard(convo, idx) {
+  const preview = convo.messages.length
+    ? convo.messages[convo.messages.length - 1].text.slice(0, 80) + (convo.messages[convo.messages.length-1].text.length > 80 ? '…' : '')
+    : '(no messages)';
+  const q = state.query.toLowerCase().trim();
+  const msgs = convo.messages
+    .filter(m => !q || m.text.toLowerCase().includes(q))
+    .slice(-20);
+  const bodyHtml = msgs.map(m =>
+    `<div class="dm-message">
+      <span class="sender">${escHtml(m.senderId)}</span>
+      <span class="dm-time">${fmtDate(m.date)}</span><br>
+      ${highlight(m.text, q)}
+    </div>`
+  ).join('');
+
+  return `<div class="dm-card">
+    <div class="dm-header" onclick="toggleDm(${idx})">
+      <span>Conversation ${escHtml(convo.id)} · ${convo.messages.length} messages</span>
+      <span>${escHtml(preview)}</span>
+    </div>
+    <div class="dm-body" id="dm-body-${idx}">${bodyHtml || '<p style="color:var(--text3);font-size:13px">No matching messages</p>'}</div>
+  </div>`;
+}
+
+function toggleDm(idx) {
+  const el = document.getElementById('dm-body-' + idx);
+  if (el) el.classList.toggle('open');
+}
+
+function renderFeed() {
+  const items = getItems();
+  const total = items.length;
+  const totalPages = Math.ceil(total / state.perPage);
+  const start = (state.page - 1) * state.perPage;
+  const page = items.slice(start, start + state.perPage);
+
+  const feed = document.getElementById('feed');
+  const rc = document.getElementById('result-count');
+
+  if (!DB.loaded) { feed.innerHTML = ''; return; }
+
+  const tabLabel = { tweets: 'tweet', replies: 'reply', likes: 'liked tweet', dms: 'conversation', media: 'media tweet' };
+  const label = tabLabel[state.tab] || 'item';
+  rc.textContent = total.toLocaleString() + ' ' + label + (total !== 1 ? 's' : '') +
+    (state.query ? ' matching "' + state.query + '"' : '');
+
+  if (!page.length) {
+    feed.innerHTML = '<div class="empty-state"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><p>No results found.</p></div>';
+  } else if (state.tab === 'dms') {
+    feed.innerHTML = page.map((item, i) => renderDmCard(item, start + i)).join('');
+  } else if (state.tab === 'likes') {
+    feed.innerHTML = page.map(item => renderLikeCard(item)).join('');
+  } else {
+    feed.innerHTML = page.map(item => renderTweetCard(item)).join('');
+  }
+
+  renderPagination(totalPages);
+}
+
+function renderPagination(totalPages) {
+  const pg = document.getElementById('pagination');
+  if (totalPages <= 1) { pg.innerHTML = ''; return; }
+
+  const cur = state.page;
+  let html = '';
+  html += `<button class="page-btn" onclick="goPage(${cur-1})" ${cur===1?'disabled':''}>← Prev</button>`;
+
+  const pages = [];
+  if (totalPages <= 7) {
+    for (let i=1;i<=totalPages;i++) pages.push(i);
+  } else {
+    pages.push(1);
+    if (cur > 3) pages.push('…');
+    for (let i=Math.max(2,cur-1); i<=Math.min(totalPages-1,cur+1); i++) pages.push(i);
+    if (cur < totalPages-2) pages.push('…');
+    pages.push(totalPages);
+  }
+
+  for (const p of pages) {
+    if (p === '…') {
+      html += `<span class="page-info">…</span>`;
+    } else {
+      html += `<button class="page-btn ${p===cur?'active':''}" onclick="goPage(${p})">${p}</button>`;
+    }
+  }
+
+  html += `<button class="page-btn" onclick="goPage(${cur+1})" ${cur===totalPages?'disabled':''}>Next →</button>`;
+  html += `<span class="page-info">Page ${cur} of ${totalPages.toLocaleString()}</span>`;
+  pg.innerHTML = html;
+}
+
+function goPage(n) {
+  state.page = n;
+  renderFeed();
+  document.getElementById('content').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function onSearch() {
+  state.query = document.getElementById('search-input').value;
+  state.page = 1;
+  renderFeed();
+}
+
+function onSort() {
+  state.sort = document.getElementById('sort-select').value;
+  state.page = 1;
+  renderFeed();
+}
+
+function resetApp() {
+  DB.tweets = []; DB.likes = []; DB.dms = []; DB.handle = ''; DB.loaded = false;
+  document.getElementById('load-screen').style.display = 'block';
+  document.getElementById('viewer-screen').style.display = 'none';
+  document.getElementById('header-stats').style.display = 'none';
+  document.getElementById('file-list').textContent = '';
+  document.getElementById('file-input').value = '';
+}
+</script>
+</body>
+</html>
