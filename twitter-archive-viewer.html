@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Twitter Archive Viewer</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/fflate/0.8.2/fflate.min.js"></script>
 <style>
 /* ── 2012-era Twitter palette ─────────────────────────────────────────────── */
 :root {
@@ -595,25 +594,86 @@ function isArchiveFile(filename) {
   );
 }
 
+// ── Self-contained ZIP reader (no external library) ───────────────────────────
+// Reads ZIP local file headers, decompresses stored (method 0) or deflated
+// (method 8) entries using the browser-native DecompressionStream API.
+// Supports Zip64 extended info fields. Sufficient for all Twitter archive ZIPs.
+
+function readU16(buf, off) { return buf[off] | (buf[off+1] << 8); }
+function readU32(buf, off) { return (buf[off] | (buf[off+1]<<8) | (buf[off+2]<<16) | (buf[off+3]<<24)) >>> 0; }
+
+async function inflateRaw(compressed) {
+  // DecompressionStream('deflate-raw') is available in all modern browsers
+  const ds = new DecompressionStream('deflate-raw');
+  const writer = ds.writable.getWriter();
+  const reader = ds.readable.getReader();
+  writer.write(compressed);
+  writer.close();
+  const chunks = [];
+  let totalLen = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    totalLen += value.length;
+  }
+  const out = new Uint8Array(totalLen);
+  let offset = 0;
+  for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.length; }
+  return out;
+}
+
 async function unzipArchive(file) {
-  // Read the zip bytes, decompress with fflate, return array of {name, text}
-  const buf = await file.arrayBuffer();
-  const uint8 = new Uint8Array(buf);
-  return new Promise((resolve, reject) => {
-    fflate.unzip(uint8, (err, unzipped) => {
-      if (err) { reject(err); return; }
-      const results = [];
-      for (const [path, bytes] of Object.entries(unzipped)) {
-        if (isArchiveFile(path)) {
-          try {
-            const text = new TextDecoder('utf-8').decode(bytes);
-            results.push({ name: path.split('/').pop(), text });
-          } catch(e) {}
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const results = [];
+  let i = 0;
+  while (i < buf.length - 4) {
+    // Local file header signature: PK\x03\x04
+    if (buf[i]!==0x50 || buf[i+1]!==0x4b || buf[i+2]!==0x03 || buf[i+3]!==0x04) { i++; continue; }
+    const method      = readU16(buf, i+8);
+    const compSize    = readU32(buf, i+18);
+    const uncompSize  = readU32(buf, i+22);
+    const nameLen     = readU16(buf, i+26);
+    const extraLen    = readU16(buf, i+28);
+    const nameBytes   = buf.slice(i+30, i+30+nameLen);
+    const entryName   = new TextDecoder('utf-8').decode(nameBytes);
+    const dataStart   = i + 30 + nameLen + extraLen;
+
+    // Resolve actual sizes (may be 0xFFFFFFFF if Zip64)
+    let cSize = compSize, uSize = uncompSize;
+    if (compSize === 0xFFFFFFFF || uncompSize === 0xFFFFFFFF) {
+      // Walk extra field for Zip64 (tag 0x0001)
+      let ei = i + 30 + nameLen, ee = ei + extraLen;
+      while (ei + 4 <= ee) {
+        const tag = readU16(buf, ei), sz = readU16(buf, ei+2);
+        if (tag === 0x0001 && sz >= 16) {
+          // Zip64 sizes stored as two 32-bit LE pairs (we only use lower 32 bits)
+          uSize = readU32(buf, ei+4);
+          cSize = readU32(buf, ei+12);
+          break;
         }
+        ei += 4 + sz;
       }
-      resolve(results);
-    });
-  });
+    }
+
+    if (isArchiveFile(entryName) && cSize > 0) {
+      try {
+        const compressedData = buf.slice(dataStart, dataStart + cSize);
+        let text;
+        if (method === 0) {
+          // Stored (no compression)
+          text = new TextDecoder('utf-8').decode(compressedData);
+        } else if (method === 8) {
+          // Deflated
+          const decompressed = await inflateRaw(compressedData);
+          text = new TextDecoder('utf-8').decode(decompressed);
+        }
+        if (text) results.push({ name: entryName.split('/').pop(), text });
+      } catch(e) { /* skip unreadable entries */ }
+    }
+    i = dataStart + cSize;
+  }
+  return results;
 }
 
 async function loadFiles(files) {
