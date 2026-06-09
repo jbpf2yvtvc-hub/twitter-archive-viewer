@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Twitter Archive Viewer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/fflate/0.8.2/fflate.min.js"></script>
 <style>
 /* ── 2012-era Twitter palette ─────────────────────────────────────────────── */
 :root {
@@ -453,19 +454,20 @@ main { display: flex; flex: 1; max-width: 1000px; margin: 0 auto; width: 100%; p
           <ol>
             <li>Go to <strong>X.com → Settings → Your account → Download an archive of your data</strong></li>
             <li>Request the archive and wait for the email (up to 24 hours)</li>
-            <li>Download and unzip the archive file</li>
-            <li>Drag the unzipped folder below, or select individual <code>.js</code> files</li>
+            <li>Download the <code>.zip</code> file — no need to unzip it</li>
+            <li>Drag the <code>.zip</code> directly below, or click to select it</li>
           </ol>
+          You can also drop individual <code>.js</code> files from an already-unzipped archive.
         </div>
         <div id="dropzone">
           <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           <h2>Drop your Twitter archive here</h2>
-          <p>Your data stays entirely in your browser — nothing is uploaded anywhere.</p>
+          <p>Accepts the <strong>.zip</strong> file directly — no unzipping needed. Your data stays entirely in your browser.</p>
           <button class="btn" onclick="document.getElementById('file-input').click()">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            Choose files
+            Choose file
           </button>
-          <input type="file" id="file-input" multiple accept=".js,.json" onchange="handleFileSelect(this.files)">
+          <input type="file" id="file-input" multiple accept=".zip,.js,.json" onchange="handleFileSelect(this.files)">
           <div class="file-list" id="file-list"></div>
         </div>
       </div>
@@ -574,19 +576,99 @@ dropzone.addEventListener('drop', e => {
 
 function setProgress(p) { document.getElementById('loading-bar').style.width = p + '%'; }
 
+// Relevant data files inside a Twitter archive ZIP
+const ARCHIVE_JS_NAMES = [
+  'tweets.js','tweet.js','likes.js','like.js',
+  'direct-messages.js','direct-message.js','account.js',
+  'tweets-part1.js','tweets-part2.js','tweets-part3.js',
+  'direct-messages-group.js','direct-messages-group-headers.js'
+];
+
+function isArchiveFile(filename) {
+  const base = filename.toLowerCase().split('/').pop();
+  return base.endsWith('.js') && (
+    ARCHIVE_JS_NAMES.includes(base) ||
+    base.startsWith('tweet') ||
+    base.startsWith('like') ||
+    base.startsWith('direct-message') ||
+    base.startsWith('account')
+  );
+}
+
+async function unzipArchive(file) {
+  // Read the zip bytes, decompress with fflate, return array of {name, text}
+  const buf = await file.arrayBuffer();
+  const uint8 = new Uint8Array(buf);
+  return new Promise((resolve, reject) => {
+    fflate.unzip(uint8, (err, unzipped) => {
+      if (err) { reject(err); return; }
+      const results = [];
+      for (const [path, bytes] of Object.entries(unzipped)) {
+        if (isArchiveFile(path)) {
+          try {
+            const text = new TextDecoder('utf-8').decode(bytes);
+            results.push({ name: path.split('/').pop(), text });
+          } catch(e) {}
+        }
+      }
+      resolve(results);
+    });
+  });
+}
+
 async function loadFiles(files) {
-  setProgress(10);
-  const jsFiles = files.filter(f => f.name.endsWith('.js') || f.name.endsWith('.json'));
-  if (!jsFiles.length) { alert('No .js or .json files found. Please select files from your Twitter archive.'); setProgress(0); return; }
+  setProgress(5);
+  const zipFiles  = files.filter(f => f.name.toLowerCase().endsWith('.zip'));
+  const jsFiles   = files.filter(f => f.name.endsWith('.js') || f.name.endsWith('.json'));
+
+  if (!zipFiles.length && !jsFiles.length) {
+    alert('Please select a Twitter archive .zip file, or individual .js files from an unzipped archive.');
+    setProgress(0); return;
+  }
+
+  let entries = []; // { name, text } for each data file to parse
+
+  // Handle ZIPs first
+  if (zipFiles.length) {
+    setProgress(10);
+    for (const zip of zipFiles) {
+      try {
+        const extracted = await unzipArchive(zip);
+        if (!extracted.length) {
+          alert('No recognisable Twitter data files found inside ' + zip.name + '. Make sure this is a Twitter/X archive .zip.');
+          setProgress(0); return;
+        }
+        entries = entries.concat(extracted);
+        document.getElementById('file-list').textContent =
+          'Found ' + extracted.length + ' data file(s) inside ' + zip.name;
+      } catch(e) {
+        alert('Could not read ' + zip.name + ' as a ZIP file. Error: ' + e.message);
+        setProgress(0); return;
+      }
+    }
+  }
+
+  // Also handle loose .js files dropped alongside or instead of a zip
+  for (const file of jsFiles) {
+    const text = await file.text();
+    entries.push({ name: file.name, text });
+  }
+
+  if (!entries.length) { setProgress(0); return; }
+
   let done = 0;
-  for (const file of jsFiles) { await parseFile(file); done++; setProgress(10 + Math.round(done/jsFiles.length*80)); }
+  for (const entry of entries) {
+    await parseEntry(entry.name, entry.text);
+    done++;
+    setProgress(20 + Math.round(done / entries.length * 72));
+  }
+
   finalise();
   setProgress(100); setTimeout(() => setProgress(0), 600);
 }
 
-async function parseFile(file) {
-  const text = await file.text();
-  const name = file.name.toLowerCase();
+async function parseEntry(name, text) {
+  name = name.toLowerCase();
   let json = null;
   const m = text.match(/=\s*(\[[\s\S]*\]|\{[\s\S]*\})\s*;?\s*$/);
   if (m) { try { json = JSON.parse(m[1]); } catch(e) {} }
